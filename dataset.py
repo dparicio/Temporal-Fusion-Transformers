@@ -62,6 +62,9 @@ class TimeSeriesDataset(Dataset):
             self.features.known_continuous + 
             self.features.observed_continuous
         )
+        if self.continuous_features:
+            df[self.continuous_features] = df[self.continuous_features].astype("float32")
+        df[self.features.target] = df[self.features.target].astype("float32")
 
         # == Encode categorical features ==
         if self.categorical_features:

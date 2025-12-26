@@ -1,0 +1,45 @@
+dataset:
+  path: processed_power_usage.csv
+  valid_boundary: 1315
+  test_boundary: 1339
+
+feature_description:
+  id: categorical_id
+  time: date
+  target: power_usage
+  known_continuous:
+    - hour
+    - day
+    - day_of_week
+    - month
+    - days_from_start
+    - hours_from_start
+    - t
+  known_categorical:
+    - categorical_hour
+    - categorical_day_of_week
+  static_categorical:
+    - categorical_id
+  static_continuous: []
+  observed_continuous: []
+  observed_categorical: []
+
+dataloader:
+  batch_size: 64
+  num_workers: 0
+  pin_memory: false
+
+model:
+  encoder_length: 48 #168
+  decoder_length: 24
+  d_model: 16 #64
+  dropout: 0.1
+  n_head: 1 #4
+  quantiles: [0.1, 0.5, 0.9]
+
+training:
+  epochs: 1
+  learning_rate: 0.001
+  grad_clip: 1.0
+  device: auto
+  log_dir: runs

@@ -1,13 +1,11 @@
+import math
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
-from dataset import FeatureDescription, TimeSeriesDataset
-import matplotlib.pyplot as plt
 
 class GLU(nn.Module):
     """Gated Linear Unit (GLU)"""
@@ -65,7 +63,71 @@ class GRN(nn.Module):
 
         # Returns the GLU gate for diagnostic purposes (in the paper)
         return (out, gate) if return_gate else out
-    
+
+
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, attn_dropout=0.0):
+        super().__init__()
+        self.activation = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(attn_dropout)
+
+    def forward(self, q, k, v, attn_mask=None):
+        # Compute scaled dot-product attention
+        d_k = q.size(-1)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
+
+        # Apply mask if provided
+        if attn_mask is not None:
+            scores = scores.masked_fill(attn_mask, -1e9)
+
+        attn = self.activation(scores)
+        attn = self.dropout(attn)
+        # Compute attention with sharing values
+        output = torch.matmul(attn, v)
+        return output, attn
+
+
+class InterpretableMultiHeadAttention(nn.Module):
+    def __init__(self, n_head, d_model, dropout=0.0):
+        super().__init__()
+
+        self.n_head = n_head
+        self.d_k = self.d_v = d_model // n_head
+
+        self.qs_layers = nn.ModuleList([nn.Linear(d_model, self.d_k, bias=False) for _ in range(n_head)])
+        self.ks_layers = nn.ModuleList([nn.Linear(d_model, self.d_k, bias=False) for _ in range(n_head)])
+        self.vs_layer = nn.Linear(d_model, self.d_v, bias=False)
+
+        self.attention = ScaledDotProductAttention(attn_dropout=0.0)
+        self.head_dropout = nn.Dropout(dropout)
+        self.w_o = nn.Linear(self.d_v, d_model, bias=False)
+        self.out_dropout = nn.Dropout(dropout)
+
+    def forward(self, q, k, v, attn_mask=None):
+        heads = []
+        attns = []
+        for i in range(self.n_head):
+            qs = self.qs_layers[i](q)
+            ks = self.ks_layers[i](k)
+            vs = self.vs_layer(v)
+            head, attn = self.attention(qs, ks, vs, attn_mask)
+            head = self.head_dropout(head)
+            heads.append(head)
+            attns.append(attn)
+
+        attn_stack = torch.stack(attns, dim=0)
+        # Combine heads by averaging for interpretable attention
+        if self.n_head > 1:
+            head_stack = torch.stack(heads, dim=0)
+            outputs = head_stack.mean(dim=0)
+        else:
+            outputs = heads[0]
+
+        outputs = self.w_o(outputs)
+        outputs = self.out_dropout(outputs)
+
+        return outputs, attn_stack
+
 
 class TemporalFusionTransformer(nn.Module):
     def __init__(self, params):
@@ -180,9 +242,12 @@ class TemporalFusionTransformer(nn.Module):
             dropout=self.dropout
         )
 
-        # Temporal self-attention (attention, GLU and LayerNorm)
-        # Attention layer TODO: For now using pytorch implementation
-        self.attention = nn.MultiheadAttention(embed_dim=self.d_model, num_heads=self.n_head, dropout=self.dropout, batch_first=True)
+        # Temporal self-attention
+        self.attention = InterpretableMultiHeadAttention(
+            n_head=self.n_head,
+            d_model=self.d_model,
+            dropout=self.dropout
+        )
 
         self.attention_gate = GLU(input_size=self.d_model, hidden_size=self.d_model, dropout=self.dropout)
         self.attention_ln   = nn.LayerNorm(self.d_model)
@@ -475,133 +540,3 @@ def quantile_loss(y_true, y_pred, quantiles):
     q = quantiles.view(1, 1, -1)
     loss = torch.maximum(q * errors, (q - 1) * errors)
     return loss.mean()
-
-
-# Test code
-if __name__ == "__main__":
-    
-    # Create feature description for electricity dataset
-    feature_description = FeatureDescription(
-        id="categorical_id",
-        time="date",
-        target="power_usage",
-        known_continuous=["hour", "day", "day_of_week", "month", "days_from_start", "hours_from_start","t"],
-        known_categorical=["categorical_hour", "categorical_day_of_week"],
-        static_categorical=["categorical_id"],
-        static_continuous=[],
-        observed_continuous=[],
-        observed_categorical=[],
-    )
-
-    # Load dataset
-    df = pd.read_csv("processed_power_usage.csv")
-
-    # Split into train, val, test
-    valid_boundary = 1315
-    test_boundary  = 1339
-
-    df_train = df[df["days_from_start"] < valid_boundary]
-    df_val   = df[(df["days_from_start"] >= valid_boundary - 7) & (df["days_from_start"] < test_boundary)]
-    df_test  = df[df["days_from_start"] >= test_boundary - 7]
-
-    # Create datasets
-    train_dataset = TimeSeriesDataset(
-        df=df_train,
-        feature_description=feature_description,
-        encoder_length=168,
-        decoder_length=24
-    )
-    # Get categorical encoder and scalers from training set
-    categorical_encoder = train_dataset.categorical_encoder
-    real_scalers, target_scalers = TimeSeriesDataset.get_scalers(train_dataset)
-
-    val_dataset = TimeSeriesDataset(
-        df=df_val,
-        feature_description=feature_description,
-        encoder_length=168,
-        decoder_length=24,
-        categorical_encoder=categorical_encoder
-    )
-
-    test_dataset = TimeSeriesDataset(
-        df=df_test,
-        feature_description=feature_description,
-        encoder_length=168,
-        decoder_length=24,
-        categorical_encoder=categorical_encoder
-    )
-
-    # Apply scalers
-    train_dataset.apply_scalers(real_scalers, target_scalers)
-    val_dataset.apply_scalers(real_scalers, target_scalers)
-    test_dataset.apply_scalers(real_scalers, target_scalers)
-
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=64, shuffle=False)
-    test_loader  = DataLoader(test_dataset,  batch_size=64, shuffle=False)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Create params
-    params = {
-        "encoder_length": train_dataset.enc_len,
-        "decoder_length": train_dataset.dec_len,
-        "time_steps": train_dataset.time_steps,
-        "feature_description": feature_description,
-        "embed_per_cat": train_dataset.get_embedding_per_cat(),
-        "d_model": 64,
-        "dropout": 0.1,
-        "n_head": 4,
-        "quantiles": [0.1, 0.5, 0.9],
-    }
-
-    model = TemporalFusionTransformer(params=params).to(device)
-
-    opt = optim.Adam(model.parameters(), lr=1e-3)
-
-    @torch.no_grad()
-    def run_epoch(model, loader, quantiles, device):
-        model.eval()
-        tot_loss, n = 0.0, 0
-        for batch in loader:
-            preds = model(batch)                                   # [B, Td, Q]
-            loss = quantile_loss(batch["target"], preds, quantiles)
-            bs = batch["target"].shape[0]
-            tot_loss += loss.item() * bs
-            n += bs
-        return tot_loss / max(n, 1)
-
-    EPOCHS = 1
-    train_hist, val_hist = [], []
-
-    for epoch in range(1, EPOCHS + 1):
-        model.train()
-        running, nseen = 0.0, 0
-        for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{EPOCHS}", leave=False):
-            opt.zero_grad()
-            preds = model(batch)
-            loss = quantile_loss(batch["target"], preds, model.quantiles) 
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-
-            bs = batch["target"].shape[0]
-            running += loss.item() * bs
-            nseen += bs
-
-        train_loss = running / max(nseen, 1)
-        val_loss   = run_epoch(model, val_loader, model.quantiles, device)
-
-        train_hist.append(train_loss)
-        val_hist.append(val_loss)
-        print(f"Epoch {epoch:02d}: train={train_loss:.5f}  val={val_loss:.5f}")
-
-    plt.figure()
-    plt.plot(range(1, EPOCHS+1), train_hist, label="train")
-    plt.plot(range(1, EPOCHS+1), val_hist,   label="val")
-    plt.xlabel("Epoch")
-    plt.ylabel("Quantile (pinball) loss")
-    plt.title("Training vs Validation Loss")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
