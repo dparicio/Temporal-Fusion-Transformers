@@ -1,5 +1,5 @@
 dataset:
-  path: processed_power_usage.csv
+  path: electricity_data/processed_power_usage.csv
   valid_boundary: 1315
   test_boundary: 1339
 
@@ -26,21 +26,24 @@ feature_description:
 
 dataloader:
   batch_size: 64
-  num_workers: 0
-  pin_memory: false
+  num_workers: 5
+  pin_memory: true
 
 model:
-  encoder_length: 48 #168
+  encoder_length: 168 # 48
   decoder_length: 24
-  d_model: 16 #64
+  d_model: 64 # 16
   dropout: 0.1
-  n_head: 1 #4
+  n_head: 4 # 1 
   quantiles: [0.1, 0.5, 0.9]
 
 training:
-  epochs: 1
+  epochs: 10
   learning_rate: 0.001
-  grad_clip: 1.0
+  grad_clip: 0.01
+  multiprocessing_workers: 5
   device: auto
   log_dir: runs
   log_every: 1000
+  log_val: true
+  log_val_every: 6000

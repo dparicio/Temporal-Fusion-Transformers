@@ -159,7 +159,8 @@ test_dataset.apply_scalers(real_scalers, target_scalers)
 
 dataloader_cfg = config.get("dataloader", {})
 batch_size = dataloader_cfg.get("batch_size", 64)
-num_workers = dataloader_cfg.get("num_workers", 0)
+default_num_workers = training_cfg.get("multiprocessing_workers", 0)
+num_workers = dataloader_cfg.get("num_workers", default_num_workers)
 pin_memory = dataloader_cfg.get("pin_memory", False)
 
 train_loader = DataLoader(
@@ -196,6 +197,8 @@ model = TemporalFusionTransformer(params=params).to(device)
 opt = optim.Adam(model.parameters(), lr=training_cfg.get("learning_rate", 1e-3))
 grad_clip = training_cfg.get("grad_clip", 1.0)
 log_every = training_cfg.get("log_every", 50)
+log_val_every = training_cfg.get("log_val_every", log_every)
+log_val_enabled = training_cfg.get("log_val", True)
 
 start_epoch = 1
 best_val_loss = float("inf")
@@ -249,7 +252,7 @@ def run_epoch(model, loader, quantiles, quantile_indices, target_scalers_by_id):
     avg_loss = tot_loss / max(n, 1)
     q_avgs = {q: total / max(n, 1) for q, total in q_totals.items()}
     if target_abs_total > 0.0:
-        q_risks = {q: total / target_abs_total for q, total in qloss_totals.items()}
+        q_risks = {q: 2.0 * total / target_abs_total for q, total in qloss_totals.items()}
     else:
         q_risks = {q: float("nan") for q in qloss_totals}
     return avg_loss, q_avgs, q_risks
@@ -263,6 +266,8 @@ for epoch in range(start_epoch, epochs + 1):
     model.train()
     running, nseen = 0.0, 0
     q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
+    window_running, window_nseen = 0.0, 0
+    window_q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
     for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False)):
         opt.zero_grad()
         preds = model(batch)
@@ -273,16 +278,39 @@ for epoch in range(start_epoch, epochs + 1):
 
         bs = batch["target"].shape[0]
         running += loss.item() * bs
+        window_running += loss.item() * bs
         for q, idx in quantile_indices.items():
             if idx is None:
                 continue
             q_loss = single_quantile_loss(batch["target"], preds[..., idx:idx + 1], q)
             q_running[q] += q_loss.item() * bs
+            window_q_running[q] += q_loss.item() * bs
         nseen += bs
+        window_nseen += bs
         global_step += 1
 
         if log_every and (batch_idx + 1) % log_every == 0:
-            writer.add_scalar("loss/train_step", loss.item(), global_step)
+            window_loss = window_running / max(window_nseen, 1)
+            writer.add_scalar("loss/train_step", window_loss, global_step)
+            for q, total in window_q_running.items():
+                writer.add_scalar(f"loss/train_p{int(q * 100)}_step", total / max(window_nseen, 1), global_step)
+            window_running, window_nseen = 0.0, 0
+            window_q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
+
+        if log_val_enabled and log_val_every and (batch_idx + 1) % log_val_every == 0:
+            val_loss_step, val_q_step, val_qrisk_step = run_epoch(
+                model,
+                val_loader,
+                model.quantiles,
+                quantile_indices,
+                target_scalers_by_id,
+            )
+            writer.add_scalar("loss/val_step", val_loss_step, global_step)
+            for q, val in val_q_step.items():
+                writer.add_scalar(f"loss/val_p{int(q * 100)}_step", val, global_step)
+            for q, val in val_qrisk_step.items():
+                writer.add_scalar(f"qrisk/val_p{int(q * 100)}_step", val, global_step)
+            model.train()
 
     train_loss = running / max(nseen, 1)
     train_q = {q: total / max(nseen, 1) for q, total in q_running.items()}
@@ -327,7 +355,12 @@ for epoch in range(start_epoch, epochs + 1):
     torch.save(checkpoint, last_ckpt_path)
     if is_best:
         torch.save(checkpoint, best_ckpt_path)
-    print(f"Epoch {epoch:02d}: train={train_loss:.5f}  val={val_loss:.5f}")
+    val_qrisk_p50 = val_qrisk.get(0.5, float("nan"))
+    val_qrisk_p90 = val_qrisk.get(0.9, float("nan"))
+    print(
+        f"Epoch {epoch:02d}: train={train_loss:.5f}  val={val_loss:.5f}  "
+        f"qrisk_p50={val_qrisk_p50:.5f}  qrisk_p90={val_qrisk_p90:.5f}"
+    )
 
 with open(os.path.join(run_dir, "metrics.json"), "w", encoding="utf-8") as f:
     json.dump(history, f, indent=2)
