@@ -4,20 +4,14 @@ dataset:
   test_boundary: 1339
 
 feature_description:
-  id: categorical_id
-  time: date
+  id: id
+  time: hours_from_start
   target: power_usage
   known_continuous:
     - hour
-    - day
     - day_of_week
-    - month
-    - days_from_start
     - hours_from_start
-    - t
-  known_categorical:
-    - categorical_hour
-    - categorical_day_of_week
+  known_categorical: []
   static_categorical:
     - categorical_id
   static_continuous: []
@@ -25,8 +19,8 @@ feature_description:
   observed_categorical: []
 
 dataloader:
-  batch_size: 256
-  num_workers: 8
+  batch_size: 64
+  num_workers: 5
   pin_memory: true
 
 model:
@@ -38,11 +32,12 @@ model:
   quantiles: [0.1, 0.5, 0.9]
 
 training:
-  epochs: 50
+  epochs: 100
   learning_rate: 0.001
   grad_clip: 0.01
   multiprocessing_workers: 5
   early_stopping_patience: 5
+  early_stopping_min_delta: 0.0001
   device: auto
   log_dir: runs
   log_every: 1000

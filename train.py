@@ -235,8 +235,11 @@ log_every = training_cfg.get("log_every", 50)
 log_val_every = training_cfg.get("log_val_every", log_every)
 log_val_enabled = training_cfg.get("log_val", True)
 early_stopping_patience = training_cfg.get("early_stopping_patience", 5)
+early_stopping_min_delta = training_cfg.get("early_stopping_min_delta", 1e-4)
 if early_stopping_patience is not None and early_stopping_patience <= 0:
     early_stopping_patience = None
+if early_stopping_min_delta is None:
+    early_stopping_min_delta = 0.0
 
 start_epoch = 1
 best_val_loss = float("inf")
@@ -419,7 +422,7 @@ for epoch in range(start_epoch, epochs + 1):
             "global_step": global_step,
         }
         wandb_run.log(epoch_metrics, step=global_step)
-    is_best = val_loss < best_val_loss
+    is_best = val_loss < (best_val_loss - early_stopping_min_delta)
     if is_best:
         best_val_loss = val_loss
     checkpoint = {

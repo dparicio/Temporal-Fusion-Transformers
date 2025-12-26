@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 import os
 from dataclasses import dataclass
 from typing import List
-from sklearn.preprocessing import OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
 @dataclass
@@ -47,7 +47,13 @@ class TimeSeriesDataset(Dataset):
 
         # Preprocess the dataframe
         df = df.copy()
-        df[self.features.time] = pd.to_datetime(df[self.features.time], utc=False)
+        time_col = self.features.time
+        if not pd.api.types.is_datetime64_any_dtype(df[time_col]):
+            time_as_numeric = pd.to_numeric(df[time_col], errors="coerce")
+            if time_as_numeric.notna().all():
+                df[time_col] = time_as_numeric
+            else:
+                df[time_col] = pd.to_datetime(df[time_col], utc=False)
         df.sort_values([self.features.id, self.features.time], inplace=True)
 
         # Group categorical features 
@@ -71,18 +77,19 @@ class TimeSeriesDataset(Dataset):
         if self.categorical_features:
             # Ensure they are strings
             X_cat = df[self.categorical_features].astype("string")
-            
-            # Define categorical encoder and fit if not provided
+
+            # Define categorical encoders and fit if not provided
             if self.categorical_encoder is None:
-                self.categorical_encoder = OrdinalEncoder(
-                    handle_unknown="use_encoded_value",
-                    unknown_value=-1
-                )
-                self.categorical_encoder.fit(X_cat)
-  
-            # Shift to start from 0
-            X_cat_encoded = self.categorical_encoder.transform(X_cat).astype(np.int64) + 1
-            df[self.categorical_features] = X_cat_encoded
+                self.categorical_encoder = {}
+                for col in self.categorical_features:
+                    encoder = LabelEncoder()
+                    encoder.fit(X_cat[col].values)
+                    self.categorical_encoder[col] = encoder
+
+            # Transform using per-column label encoders
+            for col in self.categorical_features:
+                encoder = self.categorical_encoder[col]
+                df[col] = encoder.transform(X_cat[col].values).astype(np.int64)
         else:
             self.categorical_encoder = None
 
@@ -100,7 +107,7 @@ class TimeSeriesDataset(Dataset):
         embed_per_cat = []
         for cat in self.categorical_features:
             n_unique = int(self.df[cat].nunique())
-            embed_per_cat.append(n_unique + 1) # +1 to handle for unknown category
+            embed_per_cat.append(n_unique)
 
         return embed_per_cat
 
@@ -192,6 +199,12 @@ class TimeSeriesDataset(Dataset):
             dtype=torch.float32
         )
 
+        cut_time = group[self.features.time].iloc[t]
+        if hasattr(cut_time, "isoformat"):
+            cut_time = cut_time.isoformat()
+        else:
+            cut_time = str(cut_time)
+
         return {
             "model_inputs": {
                 "static_cats": static_categorial,
@@ -203,7 +216,7 @@ class TimeSeriesDataset(Dataset):
             },
             "target": target,
             "id": str(identifier),
-            "cut_time": group[self.features.time].iloc[t].isoformat(),
+            "cut_time": cut_time,
         }
     
     @staticmethod
@@ -212,6 +225,8 @@ class TimeSeriesDataset(Dataset):
         real_scalers = {}    # Dictionary mapping id to StandardScaler for input continuous features
         target_scalers = {}  # Dictionary mapping id to StandardScaler for target
         for identifier, sliced in dataset.df.groupby(dataset.features.id, sort=False):
+            if len(sliced) < dataset.time_steps:
+                continue
             real_scalers[identifier] = StandardScaler().fit(sliced[dataset.continuous_features].values)
             target_scalers[identifier] = StandardScaler().fit(sliced[[dataset.features.target]].values)
         
@@ -224,18 +239,23 @@ class TimeSeriesDataset(Dataset):
         target_scalers
     ):
         """Apply scalers to dataset."""
+        df_list = []
         for identifier, group in self.df.groupby(self.features.id, sort=False):
-            if identifier in real_scalers:
-                real_scaler = real_scalers[identifier]
-                self.df.loc[group.index, self.continuous_features] = real_scaler.transform(
+            if identifier not in real_scalers or identifier not in target_scalers:
+                continue
+            group = group.copy()
+            real_scaler = real_scalers[identifier]
+            target_scaler = target_scalers[identifier]
+            if self.continuous_features:
+                group[self.continuous_features] = real_scaler.transform(
                     group[self.continuous_features].values
                 )
-            if identifier in target_scalers:
-                target_scaler = target_scalers[identifier]
-                self.df.loc[group.index, [self.features.target]] = target_scaler.transform(
-                    group[[self.features.target]].values
-                )
+            group[[self.features.target]] = target_scaler.transform(
+                group[[self.features.target]].values
+            )
+            df_list.append(group)
 
+        self.df = pd.concat(df_list, axis=0) if df_list else self.df.iloc[0:0].copy()
         # Rebuild samples after scaling
         self.build_samples()
 

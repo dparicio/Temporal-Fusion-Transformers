@@ -160,9 +160,10 @@ class TemporalFusionTransformer(nn.Module):
 
         # Embeddings
         self.linear_projections = nn.ModuleList([nn.Linear(1, self.d_model) for _ in range(self.n_cont)])
-        self.embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.embed_per_cat[i], 
-                                                      embedding_dim=self.d_model, 
-                                                      padding_idx=0) for i in range(self.n_cat)])
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(num_embeddings=self.embed_per_cat[i], embedding_dim=self.d_model)
+            for i in range(self.n_cat)
+        ])
         
         
         self.n_static = self.static_categorical_inputs + self.static_continuous_inputs
@@ -539,4 +540,5 @@ def quantile_loss(y_true, y_pred, quantiles):
     errors = y_true - y_pred
     q = quantiles.view(1, 1, -1)
     loss = torch.maximum(q * errors, (q - 1) * errors)
-    return loss.mean()
+    loss_by_quantile = loss.mean(dim=(0, 1))
+    return loss_by_quantile.sum()
