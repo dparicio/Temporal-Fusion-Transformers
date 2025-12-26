@@ -60,6 +60,8 @@ def update_qrisk_totals(preds, targets, ids, quantile_indices, target_scalers_by
 
 
 config, config_raw = load_config("config.yaml")
+wandb_cfg = config.get("wandb", {})
+wandb_enabled = bool(wandb_cfg.get("enabled", False))
 
 
 def move_to_device(batch, device):
@@ -94,6 +96,29 @@ if not os.path.exists(config_path):
         f.write(config_raw)
 
 writer = SummaryWriter(log_dir=run_dir)
+wandb_run = None
+if wandb_enabled:
+    try:
+        import wandb
+    except ImportError as exc:
+        raise RuntimeError(
+            "W&B enabled but wandb is not installed. Run `pip install wandb`."
+        ) from exc
+    wandb_init_kwargs = {
+        "project": wandb_cfg.get("project", "tft"),
+        "config": config,
+        "mode": wandb_cfg.get("mode", "online"),
+        "dir": run_dir,
+    }
+    if wandb_cfg.get("entity"):
+        wandb_init_kwargs["entity"] = wandb_cfg["entity"]
+    if wandb_cfg.get("name"):
+        wandb_init_kwargs["name"] = wandb_cfg["name"]
+    if wandb_cfg.get("tags"):
+        wandb_init_kwargs["tags"] = wandb_cfg["tags"]
+    if wandb_cfg.get("notes"):
+        wandb_init_kwargs["notes"] = wandb_cfg["notes"]
+    wandb_run = wandb.init(**wandb_init_kwargs)
 
 ckpt_dir = os.path.join(run_dir, "checkpoints")
 os.makedirs(ckpt_dir, exist_ok=True)
@@ -307,6 +332,15 @@ for epoch in range(start_epoch, epochs + 1):
             writer.add_scalar("loss/train_step", window_loss, global_step)
             for q, total in window_q_running.items():
                 writer.add_scalar(f"loss/train_p{int(q * 100)}_step", total / max(window_nseen, 1), global_step)
+            if wandb_run is not None:
+                step_metrics = {
+                    "loss/train_step": window_loss,
+                    "epoch": epoch,
+                    "global_step": global_step,
+                }
+                for q, total in window_q_running.items():
+                    step_metrics[f"loss/train_p{int(q * 100)}_step"] = total / max(window_nseen, 1)
+                wandb_run.log(step_metrics, step=global_step)
             window_running, window_nseen = 0.0, 0
             window_q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
 
@@ -323,6 +357,17 @@ for epoch in range(start_epoch, epochs + 1):
                 writer.add_scalar(f"loss/val_p{int(q * 100)}_step", val, global_step)
             for q, val in val_qrisk_step.items():
                 writer.add_scalar(f"qrisk/val_p{int(q * 100)}_step", val, global_step)
+            if wandb_run is not None:
+                val_step_metrics = {
+                    "loss/val_step": val_loss_step,
+                    "epoch": epoch,
+                    "global_step": global_step,
+                }
+                for q, val in val_q_step.items():
+                    val_step_metrics[f"loss/val_p{int(q * 100)}_step"] = val
+                for q, val in val_qrisk_step.items():
+                    val_step_metrics[f"qrisk/val_p{int(q * 100)}_step"] = val
+                wandb_run.log(val_step_metrics, step=global_step)
             model.train()
 
     train_loss = running / max(nseen, 1)
@@ -355,6 +400,21 @@ for epoch in range(start_epoch, epochs + 1):
     writer.add_scalar("loss/val_p90", val_q[0.9], epoch)
     writer.add_scalar("qrisk/val_p50", val_qrisk[0.5], epoch)
     writer.add_scalar("qrisk/val_p90", val_qrisk[0.9], epoch)
+    if wandb_run is not None:
+        epoch_metrics = {
+            "loss/train": train_loss,
+            "loss/val": val_loss,
+            "loss/train_p50": train_q[0.5],
+            "loss/val_p50": val_q[0.5],
+            "loss/train_p90": train_q[0.9],
+            "loss/val_p90": val_q[0.9],
+            "qrisk/val_p50": val_qrisk[0.5],
+            "qrisk/val_p90": val_qrisk[0.9],
+            "lr": opt.param_groups[0]["lr"],
+            "epoch": epoch,
+            "global_step": global_step,
+        }
+        wandb_run.log(epoch_metrics, step=global_step)
     is_best = val_loss < best_val_loss
     if is_best:
         best_val_loss = val_loss
@@ -379,3 +439,5 @@ with open(os.path.join(run_dir, "metrics.json"), "w", encoding="utf-8") as f:
     json.dump(history, f, indent=2)
 
 writer.close()
+if wandb_run is not None:
+    wandb_run.finish()

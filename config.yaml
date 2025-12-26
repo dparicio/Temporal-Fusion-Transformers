@@ -25,20 +25,20 @@ feature_description:
   observed_categorical: []
 
 dataloader:
-  batch_size: 64
-  num_workers: 5
+  batch_size: 256
+  num_workers: 8
   pin_memory: true
 
 model:
   encoder_length: 168 # 48
   decoder_length: 24
-  d_model: 64 # 16
+  d_model: 160 # 16
   dropout: 0.1
   n_head: 4 # 1 
   quantiles: [0.1, 0.5, 0.9]
 
 training:
-  epochs: 10
+  epochs: 50
   learning_rate: 0.001
   grad_clip: 0.01
   multiprocessing_workers: 5
@@ -47,3 +47,12 @@ training:
   log_every: 1000
   log_val: true
   log_val_every: 6000
+
+wandb:
+  enabled: true
+  project: tft
+  entity: null
+  name: null
+  mode: online
+  tags: []
+  notes: ""
