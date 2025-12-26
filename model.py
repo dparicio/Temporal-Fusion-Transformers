@@ -42,7 +42,7 @@ class GRN(nn.Module):
 
         self.glu = GLU(input_size=hidden_size, hidden_size=output_size, dropout=dropout)
         self.elu = nn.ELU()
-        self.skip = nn.Identity() if input_size == output_size else nn.Linear(input_size, output_size, bias=False)
+        self.skip = nn.Identity() if input_size == output_size else nn.Linear(input_size, output_size, bias=True)
         self.layer_norm = nn.LayerNorm(output_size)
 
     def forward(self, x, context=None, return_gate=False):
@@ -259,7 +259,7 @@ class TemporalFusionTransformer(nn.Module):
             output_size=self.d_model,
             dropout=self.dropout
         )
-        self.positionwise_gate = GLU(input_size=self.d_model, hidden_size=self.d_model, dropout=self.dropout)
+        self.positionwise_gate = GLU(input_size=self.d_model, hidden_size=self.d_model, dropout=0.0)
         self.positionwise_ln   = nn.LayerNorm(self.d_model)
 
         # Quantile output layers

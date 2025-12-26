@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tft-project"
+version = "0.0.0"
+description = "Temporal Fusion Transformers"
+requires-python = ">=3.10"
+dependencies = [
+  "pandas",
+  "scikit-learn",
+  "tqdm",
+  "pyyaml",
+  "tensorboard",
+  "torch",
+]
+
+[tool.setuptools]
+py-modules = ["train", "model", "dataset", "data_procress"]

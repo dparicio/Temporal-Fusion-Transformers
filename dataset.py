@@ -50,18 +50,19 @@ class TimeSeriesDataset(Dataset):
         df[self.features.time] = pd.to_datetime(df[self.features.time], utc=False)
         df.sort_values([self.features.id, self.features.time], inplace=True)
 
-        # Group categorical features
+        # Group categorical features 
         self.categorical_features = (
-            self.features.static_categorical + 
-            self.features.known_categorical + 
-            self.features.observed_categorical
+            self.features.static_categorical +
+            self.features.observed_categorical +
+            self.features.known_categorical
         )
-        # Group continuous features
-        self.continuous_features = (
-            self.features.static_continuous + 
-            self.features.known_continuous + 
-            self.features.observed_continuous
+        # Group continuous features 
+        continuous_features = (
+            self.features.static_continuous +
+            self.features.observed_continuous +
+            self.features.known_continuous
         )
+        self.continuous_features = [c for c in continuous_features if c != self.features.target]
         if self.continuous_features:
             df[self.continuous_features] = df[self.continuous_features].astype("float32")
         df[self.features.target] = df[self.features.target].astype("float32")

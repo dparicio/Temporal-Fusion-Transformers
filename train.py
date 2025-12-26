@@ -32,18 +32,63 @@ def find_quantile_index(quantiles, target):
     return None
 
 
+def update_qrisk_totals(preds, targets, ids, quantile_indices, target_scalers_by_id):
+    device = preds.device
+    
+    scales = []
+    means = []
+    for id_val in ids:
+        scaler = target_scalers_by_id[str(id_val)]
+        scales.append(scaler.scale_[0])
+        means.append(scaler.mean_[0])
+    
+    scales_tensor = torch.tensor(scales, device=device, dtype=preds.dtype).view(-1, 1, 1)
+    means_tensor = torch.tensor(means, device=device, dtype=preds.dtype).view(-1, 1, 1)
+    targets_unscaled = targets * scales_tensor + means_tensor
+    preds_unscaled = preds * scales_tensor + means_tensor
+    target_abs_total = targets_unscaled.abs().sum().item()
+    
+    qloss_totals = {}
+    for q, idx in quantile_indices.items():
+        if idx is not None:
+            pred_q = preds_unscaled[..., idx:idx+1]
+            errors = targets_unscaled - pred_q
+            loss = torch.maximum(q * errors, (q - 1) * errors)
+            qloss_totals[q] = loss.sum().item()
+
+    return qloss_totals, target_abs_total
+
+
 config, config_raw = load_config("config.yaml")
 
 training_cfg = config.get("training", {})
 log_root = training_cfg.get("log_dir", "runs")
-timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-run_dir = os.path.join(log_root, timestamp)
+resume_from = training_cfg.get("resume_from")
+if resume_from:
+    resume_from = os.path.expanduser(resume_from)
+    if os.path.exists(resume_from):
+        run_dir = os.path.abspath(os.path.join(os.path.dirname(resume_from), os.pardir))
+    else:
+        print(f"Resume checkpoint not found: {resume_from}. Starting new run.")
+        resume_from = None
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_dir = os.path.join(log_root, timestamp)
+else:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = os.path.join(log_root, timestamp)
 os.makedirs(run_dir, exist_ok=True)
 
-with open(os.path.join(run_dir, "config.yaml"), "w", encoding="utf-8") as f:
-    f.write(config_raw)
+config_path = os.path.join(run_dir, "config.yaml")
+if not os.path.exists(config_path):
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(config_raw)
 
 writer = SummaryWriter(log_dir=run_dir)
+
+ckpt_dir = os.path.join(run_dir, "checkpoints")
+os.makedirs(ckpt_dir, exist_ok=True)
+last_ckpt_path = os.path.join(ckpt_dir, "last.pt")
+best_ckpt_path = os.path.join(ckpt_dir, "best.pt")
 
 # Create feature description for electricity dataset
 feature_cfg = config["feature_description"]
@@ -58,6 +103,13 @@ feature_description = FeatureDescription(
     observed_continuous=feature_cfg.get("observed_continuous", []),
     observed_categorical=feature_cfg.get("observed_categorical", []),
 )
+if isinstance(feature_description.target, (list, tuple)):
+    target_cols = list(feature_description.target)
+else:
+    target_cols = [feature_description.target]
+missing_targets = [t for t in target_cols if t not in feature_description.observed_continuous]
+if missing_targets:
+    feature_description.observed_continuous = feature_description.observed_continuous + missing_targets
 
 # Load dataset
 dataset_cfg = config["dataset"]
@@ -82,6 +134,7 @@ train_dataset = TimeSeriesDataset(
 # Get categorical encoder and scalers from training set
 categorical_encoder = train_dataset.categorical_encoder
 real_scalers, target_scalers = TimeSeriesDataset.get_scalers(train_dataset)
+target_scalers_by_id = {str(k): v for k, v in target_scalers.items()}
 
 val_dataset = TimeSeriesDataset(
     df=df_val,
@@ -142,6 +195,20 @@ model = TemporalFusionTransformer(params=params).to(device)
 
 opt = optim.Adam(model.parameters(), lr=training_cfg.get("learning_rate", 1e-3))
 grad_clip = training_cfg.get("grad_clip", 1.0)
+log_every = training_cfg.get("log_every", 50)
+
+start_epoch = 1
+best_val_loss = float("inf")
+global_step = 0
+if resume_from:
+    checkpoint = torch.load(resume_from, map_location=device)
+    model.load_state_dict(checkpoint.get("model_state", checkpoint))
+    if "optimizer_state" in checkpoint:
+        opt.load_state_dict(checkpoint["optimizer_state"])
+    start_epoch = checkpoint.get("epoch", 0) + 1
+    global_step = checkpoint.get("global_step", 0)
+    best_val_loss = checkpoint.get("best_val_loss", float("inf"))
+    print(f"Resumed from {resume_from} at epoch {start_epoch}")
 
 target_quantiles = [0.5, 0.9]
 quantile_indices = {q: find_quantile_index(model.quantiles, q) for q in target_quantiles}
@@ -151,35 +218,52 @@ if missing_quantiles:
 
 
 @torch.no_grad()
-def run_epoch(model, loader, quantiles, quantile_indices):
+def run_epoch(model, loader, quantiles, quantile_indices, target_scalers_by_id):
     model.eval()
     tot_loss, n = 0.0, 0
     q_totals = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
+    qloss_totals = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
+    target_abs_total = 0.0
     for batch in loader:
         preds = model(batch)  # [B, Td, Q]
-        loss = quantile_loss(batch["target"], preds, quantiles)
+        targets = batch["target"].to(preds.device)
+        loss = quantile_loss(targets, preds, quantiles)
         bs = batch["target"].shape[0]
         tot_loss += loss.item() * bs
         for q, idx in quantile_indices.items():
             if idx is None:
                 continue
-            q_loss = single_quantile_loss(batch["target"], preds[..., idx:idx + 1], q)
+            q_loss = single_quantile_loss(targets, preds[..., idx:idx + 1], q)
             q_totals[q] += q_loss.item() * bs
+        batch_qloss_totals, batch_target_abs_total = update_qrisk_totals(
+            preds=preds,
+            targets=targets,
+            ids=batch["id"],
+            quantile_indices=quantile_indices,
+            target_scalers_by_id=target_scalers_by_id,
+        )
+        for q in qloss_totals:
+            qloss_totals[q] += batch_qloss_totals[q]
+        target_abs_total += batch_target_abs_total
         n += bs
     avg_loss = tot_loss / max(n, 1)
     q_avgs = {q: total / max(n, 1) for q, total in q_totals.items()}
-    return avg_loss, q_avgs
+    if target_abs_total > 0.0:
+        q_risks = {q: total / target_abs_total for q, total in qloss_totals.items()}
+    else:
+        q_risks = {q: float("nan") for q in qloss_totals}
+    return avg_loss, q_avgs, q_risks
 
 
 epochs = training_cfg.get("epochs", 1)
 train_hist, val_hist = [], []
 history = []
 
-for epoch in range(1, epochs + 1):
+for epoch in range(start_epoch, epochs + 1):
     model.train()
     running, nseen = 0.0, 0
     q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
-    for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
+    for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False)):
         opt.zero_grad()
         preds = model(batch)
         loss = quantile_loss(batch["target"], preds, model.quantiles)
@@ -195,10 +279,20 @@ for epoch in range(1, epochs + 1):
             q_loss = single_quantile_loss(batch["target"], preds[..., idx:idx + 1], q)
             q_running[q] += q_loss.item() * bs
         nseen += bs
+        global_step += 1
+
+        if log_every and (batch_idx + 1) % log_every == 0:
+            writer.add_scalar("loss/train_step", loss.item(), global_step)
 
     train_loss = running / max(nseen, 1)
     train_q = {q: total / max(nseen, 1) for q, total in q_running.items()}
-    val_loss, val_q = run_epoch(model, val_loader, model.quantiles, quantile_indices)
+    val_loss, val_q, val_qrisk = run_epoch(
+        model,
+        val_loader,
+        model.quantiles,
+        quantile_indices,
+        target_scalers_by_id,
+    )
 
     train_hist.append(train_loss)
     val_hist.append(val_loss)
@@ -208,18 +302,31 @@ for epoch in range(1, epochs + 1):
             history_entry[f"train_p{int(q * 100)}"] = train_q[q]
         if q in val_q:
             history_entry[f"val_p{int(q * 100)}"] = val_q[q]
+        if q in val_qrisk:
+            history_entry[f"val_qrisk_p{int(q * 100)}"] = val_qrisk[q]
     history.append(history_entry)
 
     writer.add_scalar("loss/train", train_loss, epoch)
     writer.add_scalar("loss/val", val_loss, epoch)
-    if 0.5 in train_q:
-        writer.add_scalar("loss/train_p50", train_q[0.5], epoch)
-    if 0.5 in val_q:
-        writer.add_scalar("loss/val_p50", val_q[0.5], epoch)
-    if 0.9 in train_q:
-        writer.add_scalar("loss/train_p90", train_q[0.9], epoch)
-    if 0.9 in val_q:
-        writer.add_scalar("loss/val_p90", val_q[0.9], epoch)
+    writer.add_scalar("loss/train_p50", train_q[0.5], epoch)
+    writer.add_scalar("loss/val_p50", val_q[0.5], epoch)
+    writer.add_scalar("loss/train_p90", train_q[0.9], epoch)
+    writer.add_scalar("loss/val_p90", val_q[0.9], epoch)
+    writer.add_scalar("qrisk/val_p50", val_qrisk[0.5], epoch)
+    writer.add_scalar("qrisk/val_p90", val_qrisk[0.9], epoch)
+    is_best = val_loss < best_val_loss
+    if is_best:
+        best_val_loss = val_loss
+    checkpoint = {
+        "epoch": epoch,
+        "global_step": global_step,
+        "model_state": model.state_dict(),
+        "optimizer_state": opt.state_dict(),
+        "best_val_loss": best_val_loss,
+    }
+    torch.save(checkpoint, last_ckpt_path)
+    if is_best:
+        torch.save(checkpoint, best_ckpt_path)
     print(f"Epoch {epoch:02d}: train={train_loss:.5f}  val={val_loss:.5f}")
 
 with open(os.path.join(run_dir, "metrics.json"), "w", encoding="utf-8") as f:
