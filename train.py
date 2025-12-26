@@ -234,9 +234,13 @@ grad_clip = training_cfg.get("grad_clip", 1.0)
 log_every = training_cfg.get("log_every", 50)
 log_val_every = training_cfg.get("log_val_every", log_every)
 log_val_enabled = training_cfg.get("log_val", True)
+early_stopping_patience = training_cfg.get("early_stopping_patience", 5)
+if early_stopping_patience is not None and early_stopping_patience <= 0:
+    early_stopping_patience = None
 
 start_epoch = 1
 best_val_loss = float("inf")
+epochs_no_improve = 0
 global_step = 0
 if resume_from:
     checkpoint = torch.load(resume_from, map_location=device)
@@ -434,6 +438,17 @@ for epoch in range(start_epoch, epochs + 1):
         f"Epoch {epoch:02d}: train={train_loss:.5f}  val={val_loss:.5f}  "
         f"qrisk_p50={val_qrisk_p50:.5f}  qrisk_p90={val_qrisk_p90:.5f}"
     )
+    if early_stopping_patience is not None:
+        if is_best:
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= early_stopping_patience:
+                print(
+                    f"Early stopping at epoch {epoch:02d} "
+                    f"(no improvement in val loss for {early_stopping_patience} epochs)."
+                )
+                break
 
 with open(os.path.join(run_dir, "metrics.json"), "w", encoding="utf-8") as f:
     json.dump(history, f, indent=2)

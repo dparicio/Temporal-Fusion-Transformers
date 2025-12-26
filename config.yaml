@@ -42,6 +42,7 @@ training:
   learning_rate: 0.001
   grad_clip: 0.01
   multiprocessing_workers: 5
+  early_stopping_patience: 5
   device: auto
   log_dir: runs
   log_every: 1000
