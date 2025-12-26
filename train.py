@@ -61,6 +61,16 @@ def update_qrisk_totals(preds, targets, ids, quantile_indices, target_scalers_by
 
 config, config_raw = load_config("config.yaml")
 
+
+def move_to_device(batch, device):
+    if torch.is_tensor(batch):
+        return batch.to(device)
+    if isinstance(batch, dict):
+        return {k: move_to_device(v, device) for k, v in batch.items()}
+    if isinstance(batch, (list, tuple)):
+        return type(batch)(move_to_device(v, device) for v in batch)
+    return batch
+
 training_cfg = config.get("training", {})
 log_root = training_cfg.get("log_dir", "runs")
 resume_from = training_cfg.get("resume_from")
@@ -227,7 +237,9 @@ def run_epoch(model, loader, quantiles, quantile_indices, target_scalers_by_id):
     q_totals = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
     qloss_totals = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
     target_abs_total = 0.0
+    device = next(model.parameters()).device
     for batch in loader:
+        batch = move_to_device(batch, device)
         preds = model(batch)  # [B, Td, Q]
         targets = batch["target"].to(preds.device)
         loss = quantile_loss(targets, preds, quantiles)
@@ -269,6 +281,7 @@ for epoch in range(start_epoch, epochs + 1):
     window_running, window_nseen = 0.0, 0
     window_q_running = {q: 0.0 for q, idx in quantile_indices.items() if idx is not None}
     for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False)):
+        batch = move_to_device(batch, device)
         opt.zero_grad()
         preds = model(batch)
         loss = quantile_loss(batch["target"], preds, model.quantiles)
