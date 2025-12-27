@@ -13,52 +13,7 @@ import yaml
 
 from dataset import FeatureDescription, TimeSeriesDataset
 from model import TemporalFusionTransformer, quantile_loss
-
-def load_config(path):
-    with open(path, "r", encoding="utf-8") as f:
-        raw = f.read()
-    return yaml.safe_load(raw), raw
-
-
-def single_quantile_loss(y_true, y_pred, q):
-    errors = y_true - y_pred
-    loss = torch.maximum(q * errors, (q - 1) * errors)
-    return loss.mean()
-
-
-def find_quantile_index(quantiles, target):
-    for i, q in enumerate(quantiles):
-        if abs(float(q) - target) < 1e-6:
-            return i
-    return None
-
-
-def update_qrisk_totals(preds, targets, ids, quantile_indices, target_scalers_by_id):
-    device = preds.device
-    
-    scales = []
-    means = []
-    for id_val in ids:
-        scaler = target_scalers_by_id[str(id_val)]
-        scales.append(scaler.scale_[0])
-        means.append(scaler.mean_[0])
-    
-    scales_tensor = torch.tensor(scales, device=device, dtype=preds.dtype).view(-1, 1, 1)
-    means_tensor = torch.tensor(means, device=device, dtype=preds.dtype).view(-1, 1, 1)
-    targets_unscaled = targets * scales_tensor + means_tensor
-    preds_unscaled = preds * scales_tensor + means_tensor
-    target_abs_total = targets_unscaled.abs().sum().item()
-    
-    qloss_totals = {}
-    for q, idx in quantile_indices.items():
-        if idx is not None:
-            pred_q = preds_unscaled[..., idx:idx+1]
-            errors = targets_unscaled - pred_q
-            loss = torch.maximum(q * errors, (q - 1) * errors)
-            qloss_totals[q] = loss.sum().item()
-
-    return qloss_totals, target_abs_total
-
+from utils import load_config, find_quantile_index, update_qrisk_totals, single_quantile_loss
 
 config, config_raw = load_config("config.yaml")
 wandb_cfg = config.get("wandb", {})
