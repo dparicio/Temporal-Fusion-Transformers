@@ -34,7 +34,7 @@ model:
 training:
   epochs: 100
   learning_rate: 0.001
-  grad_clip: 0.01
+  grad_clip: 10
   multiprocessing_workers: 5
   early_stopping_patience: 5
   early_stopping_min_delta: 0.0001

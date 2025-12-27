@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+import wandb
 
 import pandas as pd
 import torch
@@ -98,12 +99,6 @@ if not os.path.exists(config_path):
 writer = SummaryWriter(log_dir=run_dir)
 wandb_run = None
 if wandb_enabled:
-    try:
-        import wandb
-    except ImportError as exc:
-        raise RuntimeError(
-            "W&B enabled but wandb is not installed. Run `pip install wandb`."
-        ) from exc
     wandb_init_kwargs = {
         "project": wandb_cfg.get("project", "tft"),
         "config": config,

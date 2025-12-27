@@ -287,26 +287,32 @@ class TemporalFusionTransformer(nn.Module):
         for i in range(n_static_cat):
             static_cat_embeddings.append(self.embeddings[i](static_categorical_inputs[..., i]))
 
-        obs_cat_embeddings = []
-        for i in range(n_obs_cat):
-            obs_cat_embeddings.append(self.embeddings[n_static_cat + i](obs_categorical_inputs[..., i]))
-
         known_cat_embeddings = []
         for i in range(n_known_cat):
-            known_cat_embeddings.append(self.embeddings[n_static_cat + n_obs_cat + i](known_categorical_inputs[..., i]))
+            # Index starts after static
+            idx = n_static_cat + i 
+            known_cat_embeddings.append(self.embeddings[idx](known_categorical_inputs[..., i]))
+
+        obs_cat_embeddings = []
+        for i in range(n_obs_cat):
+            # Index starts after static + known
+            idx = n_static_cat + n_known_cat + i 
+            obs_cat_embeddings.append(self.embeddings[idx](obs_categorical_inputs[..., i]))
 
         # == CONTINUOUS VARIABLES ==
         static_cont_embeddings = []
         for i in range(n_static_cont):
             static_cont_embeddings.append(self.linear_projections[i](static_continuous_inputs[..., i:i+1]))    
 
-        obs_cont_embeddings = []
-        for i in range(n_obs_cont):
-            obs_cont_embeddings.append(self.linear_projections[n_static_cont + i](obs_continuous_inputs[..., i:i+1]))
-
         known_cont_embeddings = []
         for i in range(n_known_cont):
-            known_cont_embeddings.append(self.linear_projections[n_static_cont + n_obs_cont + i](known_continuous_inputs[..., i:i+1]))
+            idx = n_static_cont + i
+            known_cont_embeddings.append(self.linear_projections[idx](known_continuous_inputs[..., i:i+1]))
+
+        obs_cont_embeddings = []
+        for i in range(n_obs_cont):
+            idx = n_static_cont + n_known_cont + i
+            obs_cont_embeddings.append(self.linear_projections[idx](obs_continuous_inputs[..., i:i+1]))
 
         # Stack all embeddings along a new dimension
         static_embeddings = None
