@@ -59,14 +59,14 @@ class TimeSeriesDataset(Dataset):
         # Group categorical features 
         self.categorical_features = (
             self.features.static_categorical +
-            self.features.observed_categorical +
-            self.features.known_categorical
+            self.features.known_categorical +      
+            self.features.observed_categorical     
         )
         # Group continuous features 
         continuous_features = (
             self.features.static_continuous +
-            self.features.observed_continuous +
-            self.features.known_continuous
+            self.features.known_continuous +       
+            self.features.observed_continuous      
         )
         self.continuous_features = [c for c in continuous_features if c != self.features.target]
         if self.continuous_features:

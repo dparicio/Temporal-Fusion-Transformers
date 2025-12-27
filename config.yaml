@@ -19,8 +19,8 @@ feature_description:
   observed_categorical: []
 
 dataloader:
-  batch_size: 64
-  num_workers: 5
+  batch_size: 256
+  num_workers: 8
   pin_memory: true
 
 model:
