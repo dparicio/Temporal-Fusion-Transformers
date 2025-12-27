@@ -15,7 +15,7 @@ from dataset import FeatureDescription, TimeSeriesDataset
 from model import TemporalFusionTransformer, quantile_loss
 from utils import load_config, find_quantile_index, update_qrisk_totals, single_quantile_loss
 
-config, config_raw = load_config("config.yaml")
+config, config_raw = load_config("config.yaml", return_raw=True)
 wandb_cfg = config.get("wandb", {})
 wandb_enabled = bool(wandb_cfg.get("enabled", False))
 

@@ -1,9 +1,14 @@
 import yaml
 import torch
 
-def load_config(path):
+
+def load_config(path, return_raw=False):
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        raw = f.read()
+    config = yaml.safe_load(raw)
+    if return_raw:
+        return config, raw
+    return config
 
 
 def single_quantile_loss(y_true, y_pred, q):
