@@ -100,16 +100,31 @@ if missing_targets:
 dataset_cfg = config["dataset"]
 df = pd.read_csv(dataset_cfg["path"])
 
-# Split into train, val, test
+# Model config 
+model_cfg = config["model"]
+
+# Split into train, val, test using time column boundaries
+time_col = feature_description.time
 valid_boundary = dataset_cfg["valid_boundary"]
 test_boundary = dataset_cfg["test_boundary"]
+step_seconds = dataset_cfg.get("step_seconds")
+if step_seconds is None:
+    time_values = pd.to_numeric(df[time_col], errors="coerce").dropna().drop_duplicates().sort_values()
+    if len(time_values) < 2:
+        raise ValueError("Cannot infer step_seconds from time column; set dataset.step_seconds in config.")
+    step_seconds = int(time_values.diff().median())
+overlap = model_cfg["encoder_length"] * step_seconds
 
-df_train = df[df["days_from_start"] < valid_boundary]
-df_val = df[(df["days_from_start"] >= valid_boundary - 7) & (df["days_from_start"] < test_boundary)]
-df_test = df[df["days_from_start"] >= test_boundary - 7]
+df_train = df[df[time_col] < valid_boundary]
+df_val = df[(df[time_col] >= valid_boundary - overlap) & (df[time_col] < test_boundary)]
+df_test = df[df[time_col] >= test_boundary - overlap]
+
+id_col = feature_description.id
+train_ids = set(df_train[id_col].unique())
+df_val = df_val[df_val[id_col].isin(train_ids)]
+df_test = df_test[df_test[id_col].isin(train_ids)]
 
 # Create datasets
-model_cfg = config["model"]
 train_dataset = TimeSeriesDataset(
     df=df_train,
     feature_description=feature_description,

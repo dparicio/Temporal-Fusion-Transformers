@@ -106,7 +106,10 @@ class TimeSeriesDataset(Dataset):
         
         embed_per_cat = []
         for cat in self.categorical_features:
-            n_unique = int(self.df[cat].nunique())
+            if self.categorical_encoder and cat in self.categorical_encoder:
+                n_unique = len(self.categorical_encoder[cat].classes_)
+            else:
+                n_unique = int(self.df[cat].max()) + 1
             embed_per_cat.append(n_unique)
 
         return embed_per_cat

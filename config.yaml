@@ -1,21 +1,31 @@
 dataset:
-  path: electricity_data/processed_power_usage.csv
-  valid_boundary: 1315
-  test_boundary: 1339
+  path: velib_data/velib_dataset.csv
+  valid_boundary: 1615136340
+  test_boundary: 1616783760
+  step_seconds: 1200
 
 feature_description:
-  id: id
-  time: hours_from_start
-  target: power_usage
+  id: station_id
+  time: date_seconds
+  target: available_bikes
   known_continuous:
-    - hour
+    - minutes_of_day
     - day_of_week
-    - hours_from_start
-  known_categorical: []
+    - date_seconds
+  known_categorical: 
+    - is_public_holiday
   static_categorical:
-    - categorical_id
-  static_continuous: []
-  observed_continuous: []
+    - station_id
+    - zipcode
+  static_continuous: 
+    - latitude
+    - longitude
+    - capacity
+  observed_continuous: 
+    - temp
+    - wind
+    - snow
+    - rain
   observed_categorical: []
 
 dataloader:
@@ -38,14 +48,14 @@ training:
   multiprocessing_workers: 5
   early_stopping_patience: 5
   early_stopping_min_delta: 0.0001
-  device: auto
+  device: cpu
   log_dir: runs
   log_every: 1000
   log_val: true
   log_val_every: 6000
 
 wandb:
-  enabled: true
+  enabled: false
   project: tft
   entity: null
   name: null
