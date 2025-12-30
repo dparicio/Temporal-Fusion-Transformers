@@ -34,28 +34,29 @@ dataloader:
   pin_memory: true
 
 model:
-  encoder_length: 168 # 48
+  encoder_length: 96 # 48
   decoder_length: 24
-  d_model: 160 # 16
+  d_model: 240 # 16
   dropout: 0.1
   n_head: 4 # 1 
   quantiles: [0.1, 0.5, 0.9]
 
 training:
-  epochs: 100
+  epochs: 20
   learning_rate: 0.001
   grad_clip: 10
   multiprocessing_workers: 5
-  early_stopping_patience: 5
+  early_stopping_patience: 3
   early_stopping_min_delta: 0.0001
-  device: cpu
+  device: cuda
   log_dir: runs
   log_every: 1000
   log_val: true
   log_val_every: 6000
+  decay_per_epoch: 0.5
 
 wandb:
-  enabled: false
+  enabled: true
   project: tft
   entity: null
   name: null

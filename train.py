@@ -195,6 +195,12 @@ params = {
 model = TemporalFusionTransformer(params=params).to(device)
 
 opt = optim.Adam(model.parameters(), lr=training_cfg.get("learning_rate", 1e-3))
+steps_per_epoch = max(len(train_loader), 1)
+decay_per_epoch = training_cfg.get("decay_per_epoch", 0.5)
+scheduler = optim.lr_scheduler.LambdaLR(
+    opt,
+    lr_lambda=lambda step: decay_per_epoch ** (step / steps_per_epoch),
+)
 grad_clip = training_cfg.get("grad_clip", 1.0)
 log_every = training_cfg.get("log_every", 50)
 log_val_every = training_cfg.get("log_val_every", log_every)
@@ -215,6 +221,8 @@ if resume_from:
     model.load_state_dict(checkpoint.get("model_state", checkpoint))
     if "optimizer_state" in checkpoint:
         opt.load_state_dict(checkpoint["optimizer_state"])
+    if "scheduler_state" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler_state"])
     start_epoch = checkpoint.get("epoch", 0) + 1
     global_step = checkpoint.get("global_step", 0)
     best_val_loss = checkpoint.get("best_val_loss", float("inf"))
@@ -298,6 +306,7 @@ for epoch in range(start_epoch, epochs + 1):
         nseen += bs
         window_nseen += bs
         global_step += 1
+        scheduler.step(global_step)
 
         if log_every and (batch_idx + 1) % log_every == 0:
             window_loss = window_running / max(window_nseen, 1)
@@ -397,6 +406,7 @@ for epoch in range(start_epoch, epochs + 1):
         "optimizer_state": opt.state_dict(),
         "best_val_loss": best_val_loss,
     }
+    checkpoint["scheduler_state"] = scheduler.state_dict()
     torch.save(checkpoint, last_ckpt_path)
     if is_best:
         torch.save(checkpoint, best_ckpt_path)
