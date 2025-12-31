@@ -1,11 +1,6 @@
 import math
-import pandas as pd
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-
 
 class GLU(nn.Module):
     """Gated Linear Unit (GLU)"""

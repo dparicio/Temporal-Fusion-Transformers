@@ -75,7 +75,6 @@ os.makedirs(ckpt_dir, exist_ok=True)
 last_ckpt_path = os.path.join(ckpt_dir, "last.pt")
 best_ckpt_path = os.path.join(ckpt_dir, "best.pt")
 
-# Create feature description for electricity dataset
 feature_cfg = config["feature_description"]
 feature_description = FeatureDescription(
     id=feature_cfg["id"],

@@ -1,8 +1,8 @@
 import yaml
 import torch
 
-
 def load_config(path, return_raw=False):
+    '''Loads a YAML configuration file.'''
     with open(path, "r", encoding="utf-8") as f:
         raw = f.read()
     config = yaml.safe_load(raw)
@@ -12,6 +12,7 @@ def load_config(path, return_raw=False):
 
 
 def single_quantile_loss(y_true, y_pred, q):
+    '''Computes the quantile loss for a single quantile q.'''
     errors = y_true - y_pred
     loss = torch.maximum(q * errors, (q - 1) * errors)
     return loss.mean()

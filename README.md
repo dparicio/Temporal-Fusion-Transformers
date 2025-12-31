@@ -2,9 +2,7 @@
 
 ## Datasets
 The datasets used in this project can be found at:
-- Electricity: 
-    - Original https://archive.ics.uci.edu/ml/datasets/electricity+load+diagrams+20112014 
-    - Preprocessed for TFT: https://huggingface.co/datasets/danipaez/electricity_tft
+- Electricity: https://huggingface.co/datasets/danipaez/electricity_tft
 - Velib https://huggingface.co/datasets/danipaez/velib_tft
 
 ## Environment Setup
