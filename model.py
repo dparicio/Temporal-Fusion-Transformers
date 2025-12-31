@@ -470,7 +470,7 @@ class TemporalFusionTransformer(nn.Module):
         return yhat
 
 
-    def forward(self, batch):
+    def forward(self, batch, return_weights=False):
         # Get inputs
         stat_cats = batch["model_inputs"]["static_cats"]
         stat_cont = batch["model_inputs"]["static_cont"]
@@ -537,6 +537,14 @@ class TemporalFusionTransformer(nn.Module):
 
         # Apply quantile output layer
         yhat = self.quantile_output(transformer_layer)
+
+        if return_weights:
+            weights = {
+                "static": static_weights.squeeze(1),
+                "temporal_hist": hist_flags.squeeze(2),
+                "temporal_fut": fut_flags.squeeze(2),
+            }
+            return yhat, weights
 
         return yhat
 

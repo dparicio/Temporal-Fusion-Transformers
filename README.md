@@ -1,6 +1,13 @@
 # Temporal Fusion Transformers
 
-## Setup
+## Datasets
+The datasets used in this project can be found at:
+- Electricity: 
+    - Original https://archive.ics.uci.edu/ml/datasets/electricity+load+diagrams+20112014 
+    - Preprocessed for TFT: https://huggingface.co/datasets/danipaez/electricity_tft
+- Velib https://huggingface.co/datasets/danipaez/velib_tft
+
+## Environment Setup
 To install the required packages, run:
 ```bash
 conda create -n tft python=3.10 -y
@@ -9,7 +16,7 @@ pip install -e .
 ```
 
 ## Train
-To train the model, modify the parameters in `config.yaml` as needed and run:
+To train the model, modify the parameters in `config.yaml` (it contains both dataset structure and model hyperparameters) as needed and run:
 ```bash
 python train.py
 ```
@@ -19,4 +26,3 @@ To visualize training metrics, start TensorBoard with:
 ```bash
 tensorboard --logdir runs
 ```
-Open the printed URL (usually http://localhost:6006).
